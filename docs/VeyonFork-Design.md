@@ -181,6 +181,60 @@ bool killProcess(qint64 pid);
 
 ---
 
+### 3.5 Lockable Audio Control
+
+**Goal:** teacher sets volume / mutes student machines, and can **lock** it so students can't change it back. Confirmed greenfield — Veyon has no audio feature of any kind (nothing in `veyon-cli feature list`, no audio API usage anywhere in the tree).
+
+**Feature modelling** — mirror `screenlock`, the existing "mode that enforces something until released":
+
+```cpp
+// screenlock's pattern:
+Feature::Flag::Mode | Feature::Flag::AllComponents          // parent
+Feature::Flag::Mode | Feature::Flag::AllComponents | Meta   // sub-feature
+```
+
+- `AudioControl` — parent, `Mode` (stays active until stopped)
+- `SetVolume` — `Action`, carries level 0–100
+- `MuteAudio` — `Mode | Checked` toggle
+- `LockAudio` — `Mode`, enables client-side enforcement
+
+**Protocol:** M→C `SetVolume(level)`, `SetMute(bool)`, `SetLock(bool)`; C→M `AudioState(level, muted, locked)` so the master reflects real state.
+
+**⚠️ Placement trap:** audio endpoints are **per-session**. The Veyon *service* runs as SYSTEM in session 0 and has **no audio device**. This must run in the **server/worker (user session)**, like the file browser's worker. Getting this wrong produces silent no-ops that are painful to debug.
+
+**Windows implementation** — Core Audio:
+
+```
+IMMDeviceEnumerator → GetDefaultAudioEndpoint(eRender, eConsole) → IAudioEndpointVolume
+  SetMasterVolumeLevelScalar(0.0–1.0, &contextGuid)
+  SetMute(BOOL, &contextGuid)
+```
+
+*Enforcement (the "lock"):* there is no OS-level lock API. Register an `IAudioEndpointVolumeCallback`; on `OnNotify`, if the change did **not** originate from our own context GUID and the lock is active, immediately re-apply the enforced level. A revert-watchdog is how this is done in practice.
+
+*Plus:* extend the existing `KeyboardShortcutTrapper` (core abstraction, `WindowsKeyboardShortcutTrapper` impl, surfaced via `PlatformInputDeviceFunctions`) to swallow `VK_VOLUME_UP` / `VK_VOLUME_DOWN` / `VK_VOLUME_MUTE`. Without it the watchdog still wins, but the slider visibly fights the student; swallowing the keys is much cleaner.
+
+**Linux implementation:** PipeWire (already a Veyon dependency — `libpipewire-0.3-dev`, used by the pipewire VNC plugin) or PulseAudio via `pactl set-sink-volume` / `set-sink-mute`; enforce by subscribing to sink events and reverting.
+
+**New platform primitive** (`PlatformCoreFunctions`, or a new `PlatformAudioFunctions`):
+
+```cpp
+bool setMasterVolume(int percent);
+int  masterVolume() const;
+bool setMuted(bool muted);
+bool isMuted() const;
+```
+
+**Safety requirements — not optional:**
+
+1. **Auto-release on master disconnect.** If the teacher's app crashes or the network drops, a student must never be left permanently muted or locked. Mirror `screenlock`'s `Operation::Stop`/disconnect handling, and restore the *previous* volume on release rather than a hardcoded default.
+2. **Accessibility.** A forced mute silences screen readers and assistive audio for students who depend on them. Prefer "lock at level X" over "mute everything" as the default teaching action, and consider exempting assistive apps via per-app session volume (`IAudioSessionManager2`) instead of muting the endpoint.
+3. **Audit** lock/unlock events like other high-privilege actions.
+
+**Effort:** v1 (set volume + mute + revert-watchdog lock) **M**. Key-swallowing and per-app exemptions **S–M** on top.
+
+---
+
 ## 4. QOL / enhancement backlog (prioritised)
 
 1. **Exam / Focus mode** — one click = internet allowlist + USB-storage block + ban distracting apps + freeze new launches + full-screen notice. Bundles the three features into the highest-value classroom workflow.
@@ -282,7 +336,45 @@ docker run --rm -v "$PWD":/src -w /src \
 
 Output: `veyon-*win64*` (NSIS installer) in the repo root.
 
-**Caveat:** that image lives in Veyon's own GitLab container registry and may require authentication or may not be publicly pullable. If the pull is refused, the alternative is assembling a MinGW-w64 + Qt6 cross toolchain yourself (`/usr/x86_64-w64-mingw32` with a `qt-cmake` wrapper, as `.ci/windows/build.sh` expects) — a significant undertaking.
+**⛔ CONFIRMED UNAVAILABLE (2026-09-08):** `docker pull registry.gitlab.com/veyon/ci-mingw-w64:main` returns *"error from registry: access forbidden"* (HTTP 403). The image is private to Veyon's CI. **Use Path C instead.**
+
+### Path C — MSYS2 native Windows build *(recommended for Windows)*
+
+Veyon's Windows code paths are gated on CMake's `WIN32`:
+
+```cmake
+if(WIN32)
+    set(VEYON_BUILD_WINDOWS 1)
+```
+
+`WIN32` is true for a **native** MinGW build, and `MinGWCrossCompile.cmake` only applies if you explicitly pass `Win64Toolchain.cmake`. So a native MSYS2 build activates the correct Windows paths without any cross-compile machinery.
+
+Use the **MINGW64** shell (matches CI's `x86_64-w64-mingw32` triplet — not UCRT64, not the plain MSYS shell).
+
+Dependencies, derived from the `find_package` calls in `CMakeLists.txt` — Qt6 `Core/Core5Compat/Concurrent/Gui/Widgets/Network`, plus `Qca-qt6` and `OpenSSL` (both `REQUIRED`), plus zlib/png/jpeg/lzo for the bundled libvncserver:
+
+```bash
+pacman -S --needed git \
+  mingw-w64-x86_64-gcc mingw-w64-x86_64-cmake mingw-w64-x86_64-ninja \
+  mingw-w64-x86_64-pkgconf \
+  mingw-w64-x86_64-qt6-base mingw-w64-x86_64-qt6-5compat mingw-w64-x86_64-qt6-tools \
+  mingw-w64-x86_64-qca-qt6 mingw-w64-x86_64-openssl \
+  mingw-w64-x86_64-zlib mingw-w64-x86_64-libpng \
+  mingw-w64-x86_64-libjpeg-turbo mingw-w64-x86_64-lzo2
+```
+
+`mingw-w64-x86_64-qca-qt6` is confirmed to exist in MSYS2 — that was the dependency most at risk.
+
+```bash
+git submodule update --init --recursive
+cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo -DWITH_TRANSLATIONS=OFF .
+ninja -C build remotefilebrowser     # fast loop: just the plugin
+ninja -C build                       # everything
+```
+
+Notes: do **not** pass `-DCMAKE_TOOLCHAIN_FILE=...Win64Toolchain.cmake` (that's the cross path). `WITH_LTO` is forced off on Windows automatically. The `windows-binaries`/NSIS installer target is cross-oriented and may need work natively — irrelevant for development, where building the plugin target is enough.
+
+**Caveat:** upstream only tests cross-compilation, so expect some CMake friction on this path. The hard parts (GCC-family compiler + Qt6 + QCA) are all solved by MSYS2.
 
 ### Exercising the feature
 
