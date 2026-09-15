@@ -213,15 +213,53 @@ These features are legitimate for **managed/institutional devices**, but they ar
 
 ## 6. Build & test on Windows
 
-You have the toolchain (MSVC build tools, scoop, etc.). Rough path — I'll produce an exact, verified `BUILDING-WINDOWS.md` when we build:
+> **Correction:** an earlier draft of this doc said to use Visual Studio / MSVC. **That was wrong.** Veyon does not build with MSVC. Per `.gitlab-ci.yml` and `.ci/windows/build.sh`, Windows binaries are **cross-compiled from Linux using MinGW-w64**. Don't install Visual Studio for this.
 
-1. **Prereqs:** Visual Studio 2022 / Build Tools (MSVC x64), **Qt 6.x** (x64, matching compiler), **CMake ≥ 3.18**, Ninja (optional), OpenSSL. Veyon vendors some deps under `3rdparty/` (submodules).
-2. **Submodules:** `git submodule update --init --recursive` (needed for VNC/3rd-party bits). *(I'll confirm exactly which are required for a plugin-only rebuild.)*
-3. **Configure:** `cmake -B build -G "Ninja" -DCMAKE_PREFIX_PATH="<Qt>/6.x/msvc2022_64" -DCMAKE_BUILD_TYPE=RelWithDebInfo`
-4. **Build:** `cmake --build build` → the new plugin compiles to a `.dll` in the plugins output dir.
-5. **Run/verify:** launch Master; the new feature's toolbar button appears; check Veyon's plugin list. Test service-side features with the service installed (Configurator).
+### Path A — build for Linux (fastest iteration on feature code)
 
-Upstream also has official Windows build instructions we can lean on. For fast iteration, once a full build succeeds, rebuilding just the changed plugin is quick.
+The Remote File Browser is portable Qt (`QDir`/`QFileInfo`/`QStorageInfo`), so it runs on Linux too. This is by far the quickest way to exercise the logic. Dependency list taken verbatim from Veyon's own Ubuntu 24.04 CI image (`.ci/linux.ubuntu.24.04/Dockerfile`):
+
+```bash
+sudo apt install -y git ninja-build cmake g++ file fakeroot \
+  qt6-base-dev qt6-5compat-dev qt6-tools-dev qt6-l10n-tools qt6-declarative-dev \
+  qt6-httpserver-dev qt6-websockets-dev \
+  xorg-dev libfakekey-dev libvncserver-dev libssl-dev libpam0g-dev \
+  libproc2-dev libldap2-dev libsasl2-dev \
+  libqca-qt6-dev libqca-qt6-plugins \
+  libavcodec-dev libavformat-dev libavutil-dev libswscale-dev \
+  libpipewire-0.3-dev libspa-0.2-dev
+
+git submodule update --init --recursive
+cmake -G Ninja -B /tmp/veyon-build -DCMAKE_BUILD_TYPE=Debug -DWITH_LTO=OFF -DWITH_TRANSLATIONS=OFF .
+ninja -C /tmp/veyon-build
+
+# confirm the new plugin built:
+ls /tmp/veyon-build/plugins/remotefilebrowser/*.so
+```
+
+### Path B — produce the real Windows installer (what upstream releases)
+
+Mirrors the `build-windows` job in `.gitlab-ci.yml`:
+
+```bash
+git submodule update --init --recursive
+docker run --rm -v "$PWD":/src -w /src \
+  registry.gitlab.com/veyon/ci-mingw-w64:main \
+  .ci/windows/build.sh x86_64        # or i686 for 32-bit
+```
+
+Output: `veyon-*win64*` (NSIS installer) in the repo root.
+
+**Caveat:** that image lives in Veyon's own GitLab container registry and may require authentication or may not be publicly pullable. If the pull is refused, the alternative is assembling a MinGW-w64 + Qt6 cross toolchain yourself (`/usr/x86_64-w64-mingw32` with a `qt-cmake` wrapper, as `.ci/windows/build.sh` expects) — a significant undertaking.
+
+### Exercising the feature
+
+1. **Veyon Configurator** → set up **authentication** (key-file auth is easiest for a local test; create + import keys).
+2. Ensure the **Veyon Service** is installed and running (Configurator → Service).
+3. Add a computer via the builtin directory pointing at `127.0.0.1` for a single-machine test.
+4. Launch **Veyon Master** → select the computer → the new **"File browser"** toolbar button appears → drives → navigate → select a file → **Download**.
+
+For fast iteration, once a full build succeeds, rebuilding just the changed plugin target is quick (`ninja -C <build> remotefilebrowser`).
 
 **Dependency gotcha found while verifying:** `veyon-core` pulls in **QCA (Qt Cryptographic Architecture)** — `core/src/CryptoCore.h` does `#include <QtCrypto>`. On Linux that's `libqca-qt6-dev`; on Windows you'll need QCA built/available for your MSVC + Qt6 toolchain. It is easy to miss because nothing else hints at it until the first compile fails.
 
