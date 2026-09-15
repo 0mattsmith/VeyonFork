@@ -320,7 +320,7 @@ So the code is known to be *syntactically and semantically valid C++/Qt against 
 
 ## 8. Suggested roadmap
 
-1. **Remote File Browser v1** — browse drives/folders + download. *(in progress)*
+1. **Remote File Browser v1** — browse drives/folders + download. *(**built & verified**; end-to-end run pending)*
 2. **Dark-mode polish** — verify, then close icon/colour gaps. Small and independent, so it can land any time (it's already ~90% there upstream).
 3. **Internet Control v1** — block-all toggle (firewall) + hosts blocklist.
 4. **Remote Task Manager v1** — process list + kill.
