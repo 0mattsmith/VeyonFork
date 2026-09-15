@@ -223,6 +223,20 @@ You have the toolchain (MSVC build tools, scoop, etc.). Rough path — I'll prod
 
 Upstream also has official Windows build instructions we can lean on. For fast iteration, once a full build succeeds, rebuilding just the changed plugin is quick.
 
+**Dependency gotcha found while verifying:** `veyon-core` pulls in **QCA (Qt Cryptographic Architecture)** — `core/src/CryptoCore.h` does `#include <QtCrypto>`. On Linux that's `libqca-qt6-dev`; on Windows you'll need QCA built/available for your MSVC + Qt6 toolchain. It is easy to miss because nothing else hints at it until the first compile fails.
+
+### Verification status of the Remote File Browser plugin
+
+| Check | Result |
+|---|---|
+| `g++ -fsyntax-only` against real Qt 6 + Veyon headers | **passes** (both .cpp files) |
+| `moc` on both headers (`Q_OBJECT`, `Q_INTERFACES`, `Q_ENUM`, `Q_PLUGIN_METADATA`) | **passes** |
+| Compile moc output + sources to object files | **passes** (all 4 objects) |
+| Windows / MSVC compile | **not yet done** — your step |
+| Link + runtime behaviour | **not yet done** — needs a full build |
+
+So the code is known to be *syntactically and semantically valid C++/Qt against Veyon's actual headers* on GCC. Expect MSVC to be stricter in places, and treat runtime behaviour as untested until it runs.
+
 ---
 
 ## 7. How we work across sessions
