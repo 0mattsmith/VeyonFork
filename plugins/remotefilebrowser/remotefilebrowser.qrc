@@ -1,0 +1,6 @@
+<RCC>
+	<qresource prefix="/remotefilebrowser">
+		<file>remote-file-browser.png</file>
+		<file>remote-file-browser-dark.png</file>
+	</qresource>
+</RCC>
