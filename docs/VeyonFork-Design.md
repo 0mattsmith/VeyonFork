@@ -235,6 +235,48 @@ bool isMuted() const;
 
 ---
 
+### 3.6 Screen share / demo at the Windows login screen
+
+**Goal:** broadcast the teacher's screen (and messages) onto student machines that are sitting at the login prompt, before anyone has logged in.
+
+**Most of the machinery already exists:**
+
+- The service starts a server per WTS session using **`winlogon.exe`'s token** as the base process — `WindowsServerProcess::start()` calls `WtsSessionManager::findProcessId("winlogon.exe", sessionId)` and passes it to `runProgramInSession()`. `winlogon.exe` exists *before* anyone logs in, so a Veyon server is already running at the login screen.
+- `runProgramInSession(program, params, env, baseProcessId, **desktop**, stdin)` already takes a target **desktop**.
+- `activeDesktopName()` reports the active desktop (Windows: `GetUserObjectInformation(..., UOI_NAME, ...)`), and `DesktopInputController` already does `OpenInputDesktop` + `SetThreadDesktop`.
+
+**The single blocker** — `core/src/FeatureWorkerManager.cpp`:
+
+```cpp
+const auto currentUser = VeyonCore::platform().userFunctions()
+        .queryCurrentUserProperty(PlatformUserFunctions::UserProperty::LoginName);
+if( currentUser.isEmpty() )
+{
+    vDebug() << "could not determine current user - probably a console session with logon screen";
+    return false;          // <-- worker never starts, so the demo client never appears
+}
+```
+
+Features that paint UI on the client (Demo, TextMessage) run as a **worker**, and workers are launched via `runProgramAsUser()`. With nobody logged in there is no user to run as, so the worker is refused. The upstream comment names this exact scenario.
+
+**Fix:** when `currentUser` is empty, launch the worker as **SYSTEM in the console session on the `Winlogon` desktop** instead — reusing the winlogon-token path `VeyonServerProcess` already uses, with `Winlogon` as the desktop argument `runProgramInSession` already accepts.
+
+1. Add `PlatformCoreFunctions::runProgramAsSystemOnDesktop(program, args, desktop)` (Windows: winlogon base process + `STARTUPINFO.lpDesktop`).
+2. In `FeatureWorkerManager::startWorker()`, branch on empty `currentUser` to that path rather than returning `false`.
+3. Follow desktop switches — watch `activeDesktopName()` and restart/reattach the worker when the input desktop changes (Ctrl+Alt+Del, UAC, or a user logging in).
+
+**Security — deliberate constraints, not optional:**
+
+1. **Output only on the secure desktop.** A full-screen overlay on the login screen is structurally identical to a credential-harvesting attack. The pre-login worker must **never capture keyboard input**, and remote *control* of the `Winlogon` desktop belongs behind a separate, default-off admin setting.
+2. **Unmistakably not a login prompt** — no password-shaped fields, visible "broadcast" branding, and the real login always reachable.
+3. **Audit** when a pre-login broadcast starts and stops.
+
+**The other direction** (teacher *views* login screens in the grid) most likely already works, since the server runs pre-login and the builtin VNC server captures the console session — worth testing before building anything.
+
+**Effort:** **M**. The plumbing exists; it's one new platform primitive, removing one guard, and desktop-switch handling.
+
+---
+
 ## 4. QOL / enhancement backlog (prioritised)
 
 1. **Exam / Focus mode** — one click = internet allowlist + USB-storage block + ban distracting apps + freeze new launches + full-screen notice. Bundles the three features into the highest-value classroom workflow.
@@ -440,8 +482,9 @@ So the code is known to be *syntactically and semantically valid C++/Qt against 
 2. **Dark-mode polish** — verify, then close icon/colour gaps. Small and independent, so it can land any time (it's already ~90% there upstream).
 3. **Internet Control v1** — block-all toggle (firewall) + hosts blocklist.
 4. **Remote Task Manager v1** — process list + kill.
-5. **Exam/Focus mode + USB block** — bundle for the marquee classroom workflow.
-6. **v2 passes** — file write-ops; proxy/PAC allowlist (exam-grade); ban enforcement/prevent-launch; live theme switching.
+5. **Lockable Audio Control v1** — set volume / mute / lock. Self-contained and immediately useful day-to-day; pairs naturally with Exam/Focus mode.
+6. **Exam/Focus mode + USB block** — bundle for the marquee classroom workflow (internet allowlist + audio lock + app bans + USB off, in one click).
+7. **v2 passes** — file write-ops; proxy/PAC allowlist (exam-grade); ban enforcement/prevent-launch; audio key-swallowing + per-app exemptions; live theme switching.
 
 ---
 *Generated with Claude Code — session continuity via the VeyonFork project.*
