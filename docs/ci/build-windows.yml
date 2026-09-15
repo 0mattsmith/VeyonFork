@@ -1,0 +1,87 @@
+name: Build Windows (MSYS2)
+
+# Windows binaries for the VeyonFork feature branches.
+#
+# Upstream cross-compiles from Linux using a PRIVATE image
+# (registry.gitlab.com/veyon/ci-mingw-w64 -> HTTP 403 for us), so instead we
+# build natively on a windows runner with MSYS2/MinGW-w64. This works because
+# Veyon gates its Windows code on CMake's WIN32, which is true for native
+# MinGW; the cross-compile toolchain files only apply if explicitly passed.
+
+on:
+  push:
+    branches: [ veyonfork ]
+  pull_request:
+    branches: [ veyonfork ]
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    name: Windows x86_64 (MinGW64)
+    runs-on: windows-latest
+
+    defaults:
+      run:
+        shell: msys2 {0}
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Set up MSYS2 / MinGW64
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          # Derived from the find_package() calls in CMakeLists.txt:
+          #   Qt6 Core/Core5Compat/Concurrent/Gui/Widgets/Network
+          #   Qca-qt6 and OpenSSL  (both REQUIRED)
+          #   zlib/png/jpeg/lzo    (bundled libvncserver)
+          install: >-
+            git
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-cmake
+            mingw-w64-x86_64-ninja
+            mingw-w64-x86_64-pkgconf
+            mingw-w64-x86_64-qt6-base
+            mingw-w64-x86_64-qt6-5compat
+            mingw-w64-x86_64-qt6-tools
+            mingw-w64-x86_64-qca-qt6
+            mingw-w64-x86_64-openssl
+            mingw-w64-x86_64-zlib
+            mingw-w64-x86_64-libpng
+            mingw-w64-x86_64-libjpeg-turbo
+            mingw-w64-x86_64-lzo2
+
+      - name: Configure
+        # Do NOT pass Win64Toolchain.cmake here - that selects the cross path
+        # and sends CMake looking for /usr/x86_64-w64-mingw32.
+        run: |
+          cmake -G Ninja -B build \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DWITH_TRANSLATIONS=OFF \
+            .
+
+      - name: Build our plugin first (fast failure signal)
+        run: ninja -C build remotefilebrowser
+
+      - name: Build everything
+        run: ninja -C build
+
+      - name: Show what we produced
+        run: |
+          echo "--- plugins ---"
+          find build/plugins -name '*.dll' -printf '%f  (%s bytes)\n' | sort
+          echo "--- executables ---"
+          find build -maxdepth 2 -name '*.exe' -printf '%p\n' | sort
+
+      - name: Upload binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: veyon-windows-x86_64
+          retention-days: 14
+          path: |
+            build/**/*.exe
+            build/**/*.dll
+          if-no-files-found: error
