@@ -55,6 +55,8 @@ jobs:
             mingw-w64-x86_64-lzo2
             mingw-w64-x86_64-openldap
             mingw-w64-x86_64-cyrus-sasl
+            mingw-w64-x86_64-qt6-httpserver
+            mingw-w64-x86_64-qt6-websockets
 
       - name: Configure
         # Do NOT pass Win64Toolchain.cmake here - that selects the cross path
