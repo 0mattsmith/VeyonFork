@@ -293,6 +293,30 @@ Output: `veyon-*win64*` (NSIS installer) in the repo root.
 
 For fast iteration, once a full build succeeds, rebuilding just the changed plugin target is quick (`ninja -C <build> remotefilebrowser`).
 
+### Verified build status (2026-09-08)
+
+Built and installed successfully on **Debian 13 (trixie) / Qt6** under WSL2:
+
+- `ninja remotefilebrowser` → `[27/27]`, clean; full tree → `[187/187]`, clean.
+- `sudo ninja install` places `remotefilebrowser.so` in `/usr/local/lib/veyon/` alongside stock plugins.
+
+**Headless verification — no GUI required, and a stronger check than looking for the toolbar button.** These prove the `.so` loads, plugin metadata/IID is valid, interface casts resolve, and the feature registers with `FeatureManager`:
+
+```bash
+veyon-cli plugin show     # → RemoteFileBrowser | Browse and retrieve files from remote computers | 1.0
+veyon-cli feature list    # → RemoteFileBrowser
+```
+
+Both pass. Useful adjacent CLI modules: `veyon-cli config get|set|list`, `veyon-cli service`, `veyon-cli authkeys`.
+
+**GUI under WSL2 — known issue.** WSLg renders Veyon's Qt windows blank (GPU path), under both `wayland` and `xcb`, and software-rendering env vars don't fix it. Working workaround, using the Qt VNC platform plugin that's already installed:
+
+```bash
+QT_QPA_PLATFORM=vnc veyon-master     # serves the UI on localhost:5900
+```
+
+Connect any VNC viewer from Windows to `localhost:5900` (WSL2 forwards listening ports to the host). The `does not support createPlatformOpenGLContext` warning is harmless. Alternatively run a real X server on Windows (VcXsrv/X410). Native Windows builds avoid this entirely.
+
 **Dependency gotcha found while verifying:** `veyon-core` pulls in **QCA (Qt Cryptographic Architecture)** — `core/src/CryptoCore.h` does `#include <QtCrypto>`. On Linux that's `libqca-qt6-dev`; on Windows you'll need QCA built/available for your MSVC + Qt6 toolchain. It is easy to miss because nothing else hints at it until the first compile fails.
 
 ### Verification status of the Remote File Browser plugin
