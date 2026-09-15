@@ -53,6 +53,8 @@ jobs:
             mingw-w64-x86_64-libpng
             mingw-w64-x86_64-libjpeg-turbo
             mingw-w64-x86_64-lzo2
+            mingw-w64-x86_64-openldap
+            mingw-w64-x86_64-cyrus-sasl
 
       - name: Configure
         # Do NOT pass Win64Toolchain.cmake here - that selects the cross path
