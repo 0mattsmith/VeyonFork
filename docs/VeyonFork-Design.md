@@ -217,18 +217,48 @@ These features are legitimate for **managed/institutional devices**, but they ar
 
 ### Path A — build for Linux (fastest iteration on feature code)
 
-The Remote File Browser is portable Qt (`QDir`/`QFileInfo`/`QStorageInfo`), so it runs on Linux too. This is by far the quickest way to exercise the logic. Dependency list taken verbatim from Veyon's own Ubuntu 24.04 CI image (`.ci/linux.ubuntu.24.04/Dockerfile`):
+The Remote File Browser is portable Qt (`QDir`/`QFileInfo`/`QStorageInfo` — all present in both Qt5 and Qt6), so it runs on Linux too. This is by far the quickest way to exercise the logic.
+
+**Debian is a first-class CI target** (`debian.11`, `debian.12`, `debian.13` are all in the build matrix). Which release you pick decides the Qt major version:
+
+| Release | Qt | Notes |
+|---|---|---|
+| Debian 13 "trixie" | **Qt6** | Recommended — the modern path |
+| Debian 12 "bookworm" | **Qt5** | Also fully tested by CI |
+| Debian 11 "bullseye" | Qt5 | Oldest supported |
+
+Check what you have with `cat /etc/debian_version`, then use the matching list (both taken verbatim from Veyon's own CI Dockerfiles).
+
+**Debian 13 / trixie (Qt6)** — from `.ci/linux.debian.13/Dockerfile`:
 
 ```bash
-sudo apt install -y git ninja-build cmake g++ file fakeroot \
-  qt6-base-dev qt6-5compat-dev qt6-tools-dev qt6-l10n-tools qt6-declarative-dev \
+sudo apt install -y --no-install-recommends \
+  dpkg-dev ca-certificates git binutils gcc g++ ninja-build cmake file fakeroot bzip2 \
+  qt6-base-dev qt6-5compat-dev qt6-l10n-tools qt6-tools-dev qt6-declarative-dev \
   qt6-httpserver-dev qt6-websockets-dev \
-  xorg-dev libfakekey-dev libvncserver-dev libssl-dev libpam0g-dev \
-  libproc2-dev libldap2-dev libsasl2-dev \
+  libpipewire-0.3-dev libspa-0.2-dev xorg-dev libfakekey-dev libvncserver-dev \
+  libssl-dev libpam0g-dev libproc2-dev libldap2-dev libsasl2-dev \
   libqca-qt6-dev libqca-qt6-plugins \
-  libavcodec-dev libavformat-dev libavutil-dev libswscale-dev \
-  libpipewire-0.3-dev libspa-0.2-dev
+  libavcodec-dev libavformat-dev libavutil-dev libswscale-dev
+```
 
+**Debian 12 / bookworm (Qt5)** — from `.ci/linux.debian.12/Dockerfile`:
+
+```bash
+sudo apt install -y --no-install-recommends \
+  dpkg-dev ca-certificates git binutils gcc g++ ninja-build cmake file fakeroot bzip2 \
+  qtbase5-dev qtbase5-private-dev qtbase5-dev-tools qttools5-dev qttools5-dev-tools \
+  qtdeclarative5-dev qtquickcontrols2-5-dev \
+  libpipewire-0.3-dev libspa-0.2-dev xorg-dev libfakekey-dev \
+  libpng-dev libjpeg-dev zlib1g-dev liblzo2-dev libvncserver-dev \
+  libssl-dev libpam0g-dev libproc2-dev libldap2-dev libsasl2-dev \
+  libqca-qt5-2-dev libqca-qt5-2-plugins \
+  libavcodec-dev libavformat-dev libavutil-dev libswscale-dev
+```
+
+Then, in either case:
+
+```bash
 git submodule update --init --recursive
 cmake -G Ninja -B /tmp/veyon-build -DCMAKE_BUILD_TYPE=Debug -DWITH_LTO=OFF -DWITH_TRANSLATIONS=OFF .
 ninja -C /tmp/veyon-build
@@ -236,6 +266,8 @@ ninja -C /tmp/veyon-build
 # confirm the new plugin built:
 ls /tmp/veyon-build/plugins/remotefilebrowser/*.so
 ```
+
+**On LMDE:** LMDE is Debian stable underneath, so whichever Debian base it tracks, use that release's list above. Note LMDE is *not* an official WSL distro — it needs a manual `wsl --import` of a rootfs, and its value (the Cinnamon desktop) is irrelevant to a headless build environment. For WSL, plain `wsl --install -d Debian` is the simpler and CI-matching choice.
 
 ### Path B — produce the real Windows installer (what upstream releases)
 
