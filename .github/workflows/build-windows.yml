@@ -61,6 +61,7 @@ jobs:
           cmake -G Ninja -B build \
             -DCMAKE_BUILD_TYPE=RelWithDebInfo \
             -DWITH_TRANSLATIONS=OFF \
+            -DWITH_BUNDLED_LIBVNC=ON \
             .
 
       - name: Build our plugin first (fast failure signal)
